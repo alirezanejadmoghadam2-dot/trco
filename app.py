@@ -74,7 +74,7 @@ def build_conditions(df: pd.DataFrame) -> pd.DataFrame:
     df["signal"] = pd.Series(sig, index=df.index); return df
 
 # ==============================================================================
-# بخش ۳: توابع معامله‌گر و مدیریت وضعیت (کامل)
+# بخش ۳: توابع معامله‌گر و مدیریت وضعیت
 # ==============================================================================
 is_position_active = False; active_position_info = {"symbol": None, "side": None}
 exchange = ccxt.coinex({'apiKey': API_KEY, 'secret': SECRET_KEY, 'options': {'defaultType': 'swap'}, 'enableRateLimit': True, 'timeout': 60000})
@@ -154,10 +154,10 @@ async def handle_trade_signal(symbol: str, side: str, signal_price: float):
     except Exception as e: print(f"❌ خطا در اجرای سیگنال: {e}"); await close_everything(symbol)
 
 # ==============================================================================
-# بخش ۴: تابع تست خودکار
+# بخش ۴: تابع تست خودکار (با سفارش Limit)
 # ==============================================================================
 async def run_startup_test():
-    """یک پوزیشن تست باز کرده، چند دقیقه صبر کرده و سپس آن را می‌بندد."""
+    """یک سفارش لیمیت تست قرار داده، چند دقیقه صبر کرده و سپس آن را لغو می‌کند."""
     print("\n" + "="*50)
     print("--- 🚦 شروع تست خودکار اتصال و معامله 🚦 ---")
     
@@ -166,38 +166,41 @@ async def run_startup_test():
     test_price = 50000.0
     test_margin = 1.0
     test_leverage = 10
-    wait_minutes = 3 # چند دقیقه پوزیشن تست باز بماند
+    wait_minutes = 3
 
+    print("\n--- بررسی و پاکسازی پوزیشن‌ها و سفارشات باز احتمالی ---")
+    await exchange.cancel_all_orders(test_symbol)
     position = await get_position_info(test_symbol)
     if position:
-        print("یک پوزیشن از قبل باز است. در حال بستن آن...")
         side = 'buy' if float(position['contracts']) > 0 else 'sell'
         close_side = 'sell' if side == 'buy' else 'buy'
         await exchange.create_market_order(test_symbol, close_side, abs(position['contracts']), params={'reduceOnly': True})
-        await asyncio.sleep(3)
-    
+        print("✅ پوزیشن باز قبلی با موفقیت بسته شد.")
+    else:
+        print("ℹ️ هیچ پوزیشن بازی از قبل وجود نداشت.")
+
     try:
         await exchange.set_leverage(test_leverage, test_symbol)
         amount = (test_margin * test_leverage) / test_price
-        await exchange.create_market_order(test_symbol, test_side, amount)
-        await asyncio.sleep(5)
+        print(f"\n--- در حال قرار دادن سفارش تست Limit {test_side.upper()} روی قیمت {test_price} ---")
         
-        position = await get_position_info(test_symbol)
-        if position:
-            print(f"✅✅✅ پوزیشن تست با موفقیت باز شد! لطفاً حساب CoinEx خود را چک کنید.")
-            print(f"قیمت ورود: {position['entryPrice']}")
-            print(f"این پوزیشن به مدت {wait_minutes} دقیقه باز خواهد ماند و سپس به طور خودکار بسته می‌شود.")
-            print("="*50)
-            await asyncio.sleep(wait_minutes * 60)
+        order = await exchange.create_limit_order(test_symbol, test_side, amount, test_price)
+        order_id = order['id']
+        print(f"✅ سفارش لیمیت با موفقیت در صرافی قرار داده شد. ID سفارش: {order_id}")
+
+        print("\n" + "="*50)
+        print("✅ سفارش تست با موفقیت ثبت شد. لطفاً به بخش 'Open Orders' در CoinEx بروید و آن را چک کنید.")
+        print(f"این سفارش به مدت {wait_minutes} دقیقه باز خواهد ماند و سپس به طور خودکار لغو می‌شود.")
+        print("="*50)
+        await asyncio.sleep(wait_minutes * 60)
             
-            print(f"\n--- ⏰ پایان زمان تست. در حال بستن پوزیشن تست... ---")
-            close_side = 'sell' if test_side == 'buy' else 'buy'
-            await exchange.create_market_order(test_symbol, close_side, abs(position['contracts']), params={'reduceOnly': True})
-            print("✅ پوزیشن تست با موفقیت بسته شد.")
-            return True
-        else:
-            print("\n❌ پوزیشن تست باز نشد. لطفاً خطاها را در لاگ بررسی کنید (موجودی حساب فیوچرز را چک کنید).")
-            return False
+        print(f"\n--- ⏰ پایان زمان تست. در حال لغو سفارش تست... ---")
+        try:
+            await exchange.cancel_order(order_id, test_symbol)
+            print("✅ سفارش تست با موفقیت لغو شد.")
+        except ccxt.OrderNotFound:
+            print("ℹ️ سفارش تست قبلاً پر یا لغو شده بود.")
+        return True
 
     except Exception as e:
         print(f"❌ خطای جدی در هنگام تست خودکار: {e}")
@@ -275,7 +278,6 @@ async def startup_event():
             print("\n" + "="*50)
             print("❌ تست خودکار ناموفق بود. ربات اصلی اجرا نخواهد شد.")
             print("لطفاً لاگ‌ها را برای پیدا کردن خطا بررسی کنید.")
-            print("سرویس برای بررسی بیشتر فعال باقی می‌ماند.")
             print("="*50)
 
     asyncio.create_task(run_main_logic())
