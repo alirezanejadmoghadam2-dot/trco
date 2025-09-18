@@ -7,12 +7,12 @@ from datetime import datetime
 import os
 from dotenv import load_dotenv
 from fastapi import FastAPI
+import httpx
 
 # ==============================================================================
 # بخش ۰: راه‌اندازی وب‌سرور و متغیرهای سراسری
 # ==============================================================================
 app = FastAPI(); bot_task = None
-
 @app.get("/")
 async def health_check():
     if bot_task and not bot_task.done(): return {"status": "ok", "message": "Trading bot is running."}
@@ -23,6 +23,14 @@ async def health_check():
 # ==============================================================================
 load_dotenv(); API_KEY = os.getenv('COINEX_API_KEY'); SECRET_KEY = os.getenv('COINEX_SECRET_KEY')
 if not API_KEY or not SECRET_KEY: raise ValueError("خطا: کلیدهای API یافت نشدند.")
+
+# --- تنظیمات زمان‌بندی ---
+SIGNAL_CHECK_INTERVAL_SECONDS = 300      # 300 ثانیه = 5 دقیقه
+TP_MONITOR_INTERVAL_SECONDS = 20         # 20 ثانیه برای چک کردن حد سود
+CLOSURE_MONITOR_INTERVAL_SECONDS = 300   # 300 ثانیه = 5 دقیقه برای چک کردن بسته شدن نهایی
+SELF_PING_INTERVAL_SECONDS = 20          # 20 ثانیه برای بیدار ماندن
+
+# --- تنظیمات استراتژی ---
 SYMBOL_FOR_TRADING = 'BTC/USDT:USDT'; LEVERAGE = 10; MARGIN_PER_STEP_USDT = 1.0;
 TAKE_PROFIT_PERCENTAGE_FROM_AVG_ENTRY = 0.01; DCA_STEP_PERCENTAGE = 0.005;
 TAKE_PROFIT_1_PERCENTAGE = 0.005; TAKE_PROFIT_2_PERCENTAGE = 0.01; CLOSE_RATIO_TP1 = 0.5;
@@ -74,7 +82,6 @@ def build_conditions(df: pd.DataFrame) -> pd.DataFrame:
 # ==============================================================================
 is_position_active = False; active_position_info = {"symbol": None, "side": None, "stage": 1}
 exchange = ccxt.coinex({'apiKey': API_KEY, 'secret': SECRET_KEY, 'options': {'defaultType': 'swap'}, 'enableRateLimit': True, 'timeout': 60000})
-
 async def get_position_info(symbol):
     try:
         positions = await exchange.fetch_positions([symbol])
@@ -109,15 +116,13 @@ async def monitor_position_and_tp():
     global is_position_active, active_position_info
     symbol = active_position_info["symbol"]; side = active_position_info["side"]; print(f"👁️ مانیتورینگ پوزیشن {side.upper()} شروع شد (استراتژی خروج ترکیبی).")
     while is_position_active:
-        await asyncio.sleep(20)
         try:
-            position = await get_position_info(symbol)
-            if not position: print("⚠️ پوزیشن بسته شده است. در حال ریست کردن..."); await close_everything(symbol); break
-            
-            avg_entry = float(position['entryPrice']); current_quantity = abs(float(position['contracts']))
-            ticker = await exchange.fetch_ticker(symbol); current_price = ticker['last']
-            
             if active_position_info["stage"] == 1:
+                await asyncio.sleep(TP_MONITOR_INTERVAL_SECONDS) # هر 20 ثانیه
+                position = await get_position_info(symbol)
+                if not position: print("⚠️ پوزیشن بسته شده است. در حال ریست کردن..."); await close_everything(symbol); break
+                avg_entry = float(position['entryPrice']); current_quantity = abs(float(position['contracts']))
+                ticker = await exchange.fetch_ticker(symbol); current_price = ticker['last']
                 tp1_price = avg_entry * (1 + TAKE_PROFIT_1_PERCENTAGE) if side == 'buy' else avg_entry * (1 - TAKE_PROFIT_1_PERCENTAGE)
                 print(f"مرحله ۱: میانگین ورود={avg_entry:.2f}, قیمت فعلی={current_price:.2f}, حد سود اول (TP1)={tp1_price:.2f}")
                 if (side == 'buy' and current_price >= tp1_price) or (side == 'sell' and current_price <= tp1_price):
@@ -131,8 +136,13 @@ async def monitor_position_and_tp():
                     active_position_info["stage"] = 2
                     print("✅ معامله ریسک-فری شد. سفارشات خروج برای باقیمانده پوزیشن ثبت شد.")
             elif active_position_info["stage"] == 2:
-                print(f"مرحله ۲ (ریسک-فری): پوزیشن هنوز فعال است. حجم فعلی: {current_quantity:.5f}")
-        except Exception as e: print(f"❌ خطا در حلقه مانیتورینگ: {e}")
+                await asyncio.sleep(CLOSURE_MONITOR_INTERVAL_SECONDS) # هر 5 دقیقه
+                position = await get_position_info(symbol)
+                if not position:
+                    print("🎉 پوزیشن به طور کامل بسته شد. در حال پاکسازی نهایی..."); await close_everything(symbol); break
+                else: print(f"مرحله ۲ (ریسک-فری): پوزیشن هنوز فعال است. حجم فعلی: {abs(position['contracts']):.5f}")
+        except Exception as e:
+            print(f"❌ خطا در حلقه مانیتورینگ: {e}"); await asyncio.sleep(60)
 async def handle_trade_signal(symbol: str, side: str, signal_price: float):
     global is_position_active, active_position_info
     if is_position_active: print("یک پوزیشن از قبل فعال است."); return
@@ -208,13 +218,12 @@ async def run_startup_test():
 # بخش ۵: حلقه اصلی ربات
 # ==============================================================================
 async def trading_bot_loop():
-    poll_seconds = 30; last_signal_timestamp = None
+    last_signal_timestamp = None
     try:
         print("\n--- 🧠 در حال آماده‌سازی داده‌ها برای استراتژی اصلی ---")
         df15 = await fetch_ohlcv_df(exchange, SYMBOL_FOR_DATA, TIMEFRAME, DATA_LIMIT); 
         print(f"✅ {len(df15)} کندل اولیه دریافت شد.")
     except Exception as e: print(f"❌ خطا در هنگام راه‌اندازی استراتژی: {e}"); return
-
     print("✅ ربات تحلیلگر و معامله‌گر آماده به کار است.")
     while True:
         try:
@@ -230,32 +239,41 @@ async def trading_bot_loop():
                     except Exception as e:
                         print(f"❌ تلاش شماره {attempt + 1} برای دریافت کندل ناموفق بود: {e}")
                         if attempt < max_fetch_attempts - 1: await asyncio.sleep(10)
-                
                 if last_candle_df is None: 
                     print("🔥🔥🔥 هشدار: دریافت اطلاعات کندل جدید ناموفق بود. این چرخه تحلیل نادیده گرفته می‌شود. 🔥🔥🔥")
                 else:
-                    df15 = upsert_last_candle(df15, last_candle_df.iloc[[0]])
-                    df15 = upsert_last_candle(df15, last_candle_df.iloc[[1]])
+                    df15 = upsert_last_candle(df15, last_candle_df.iloc[[0]]); df15 = upsert_last_candle(df15, last_candle_df.iloc[[1]])
                     df15_with_signals = build_conditions(compute_indicators(df15))
                     current_row = df15_with_signals.iloc[-2]
-                    
                     if pd.notna(current_row["signal"]) and current_row['time'] != last_signal_timestamp:
                         last_signal_timestamp = current_row['time']
-                        current_sig = str(current_row["signal"]).lower()
-                        signal_price = float(current_row["close"])
+                        current_sig = str(current_row["signal"]).lower(); signal_price = float(current_row["close"])
                         print(f"🔥🔥🔥 سیگنال جدید یافت شد: {current_sig.upper()} در قیمت {signal_price:.2f} 🔥🔥🔥")
                         await handle_trade_signal(symbol=SYMBOL_FOR_TRADING, side=current_sig, signal_price=signal_price)
                     else: 
                         print(f"قیمت فعلی: {df15.iloc[-1]['close']:.2f}. شرایط سیگنال جدید مهیا نیست.")
         except Exception as e: 
             print(f"❌ خطایی در حلقه اصلی رخ داد: {e}")
-        
-        # *** تغییر کلیدی: sleep در هر صورت اجرا می‌شود ***
-        await asyncio.sleep(poll_seconds)
+        await asyncio.sleep(SIGNAL_CHECK_INTERVAL_SECONDS)
 
 # ==============================================================================
 # بخش ۶: راه‌اندازی نهایی
 # ==============================================================================
+async def self_ping_loop():
+    """هر ۲۰ ثانیه یک بار به خودش پینگ می‌زند تا بیدار بماند."""
+    await asyncio.sleep(60)
+    render_url = os.getenv('RENDER_EXTERNAL_URL')
+    if not render_url: print("⚠️ هشدار: آدرس خارجی Render یافت نشد. قابلیت self-ping غیرفعال است."); return
+    print(f"✅ قابلیت بیدار نگه داشتن خودکار روی آدرس {render_url} فعال شد.")
+    while True:
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.get(render_url)
+            print(f"Ping successful at {datetime.now().strftime('%H:%M:%S')}")
+        except Exception as e:
+            print(f"Ping failed: {e}")
+        await asyncio.sleep(SELF_PING_INTERVAL_SECONDS)
+
 async def main_bot_logic():
     """تابع اصلی که ابتدا تست را اجرا کرده و سپس وارد حلقه اصلی می‌شود."""
     test_successful = await run_startup_test()
@@ -270,6 +288,7 @@ async def startup_event():
     global bot_task
     print("🚀 سرور وب شروع به کار کرد. در حال فعال کردن منطق اصلی ربات...")
     bot_task = asyncio.create_task(main_bot_logic())
+    asyncio.create_task(self_ping_loop())
 
 @app.on_event("shutdown")
 async def shutdown_event():
