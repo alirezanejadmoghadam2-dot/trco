@@ -4,32 +4,23 @@ import ccxt.async_support as ccxt
 import numpy as np
 import pandas as pd
 from datetime import datetime
-import os
-from dotenv import load_dotenv
-from fastapi import FastAPI
-
-# ==============================================================================
-# بخش ۰: راه‌اندازی وب‌سرور برای بیدار ماندن
-# ==============================================================================
-app = FastAPI()
-
-@app.get("/")
-async def health_check():
-    return {"status": "ok", "message": "Trading bot is alive."}
+import sys
 
 # ==============================================================================
 # بخش ۱: تنظیمات اصلی ربات
 # ==============================================================================
-load_dotenv()
-API_KEY = os.getenv('COINEX_API_KEY')
-SECRET_KEY = os.getenv('COINEX_SECRET_KEY')
-
-if not API_KEY or not SECRET_KEY:
-    raise ValueError("خطا: کلیدهای API یافت نشدند.")
-
+API_KEY = 'YOUR_API_KEY'
+SECRET_KEY = 'YOUR_SECRET_KEY'
 SYMBOL_FOR_TRADING = 'BTC/USDT:USDT' 
-LEVERAGE = 10; MARGIN_PER_STEP_USDT = 1.0; TAKE_PROFIT_PERCENTAGE_FROM_AVG_ENTRY = 0.01;
-DCA_STEP_PERCENTAGE = 0.005; SYMBOL_FOR_DATA = "BTC/USDT"; TIMEFRAME = "15m"; DATA_LIMIT = 1000 
+LEVERAGE = 10
+MARGIN_PER_STEP_USDT = 1.0
+TAKE_PROFIT_PERCENTAGE_FROM_AVG_ENTRY = 0.01
+DCA_STEP_PERCENTAGE = 0.005
+SYMBOL_FOR_DATA = "BTC/USDT"; TIMEFRAME = "15m"; DATA_LIMIT = 1000 
+
+# ==============================================================================
+# بخش ۲: پارامترهای استراتژی تحلیل شما (کپی دقیق از کد اصلی)
+# ==============================================================================
 countbc = 3; length = 21; rsi_length = length; rsi_sell = 60.0; rsi_buy = 40.0;
 macd_fast_length = 9; macd_slow_length = 26; macd_signal_length = 12; macd_threshold = 400.0;
 adx_val = 20.0; adx_length = length; adx_smoothing = length;
@@ -38,7 +29,7 @@ sqzbuy = -700.0; sqzsell = 700.0; mtf_buy_threshold = -700.0; mtf_sell_threshold
 fastLength_mtf = 12; slowLength_mtf = 26; signalLength_mtf = 9;
 
 # ==============================================================================
-# بخش ۲: توابع تحلیل تکنیکال (کامل)
+# بخش ۳: توابع کمکی و اندیکاتورها (منطق اصلی تحلیل شما)
 # ==============================================================================
 def rma(series: pd.Series, period: int) -> pd.Series: return series.ewm(alpha=1.0/period, adjust=False).mean()
 def rsi(series: pd.Series, period: int) -> pd.Series: delta = series.diff(); up = pd.Series(np.where(delta > 0, delta, 0.0), index=series.index); down = pd.Series(np.where(delta < 0, -delta, 0.0), index=series.index); rs = rma(up, period) / rma(down, period); return 100 - (100/(1+rs))
@@ -73,13 +64,15 @@ def build_conditions(df: pd.DataFrame) -> pd.DataFrame:
     df["signal"] = pd.Series(sig, index=df.index); return df
 
 # ==============================================================================
-# بخش ۳: توابع معامله‌گر و مدیریت وضعیت (کامل)
+# بخش ۴: توابع معامله‌گر و مدیریت وضعیت
 # ==============================================================================
 is_position_active = False; active_position_info = {"symbol": None, "side": None}
 exchange = ccxt.coinex({'apiKey': API_KEY, 'secret': SECRET_KEY, 'options': {'defaultType': 'swap'}, 'enableRateLimit': True, 'timeout': 60000})
+
 async def get_usdt_balance():
     try: balance = await exchange.fetch_balance(); return balance['USDT']['free']
     except Exception as e: print(f"❌ خطا در دریافت موجودی: {e}"); return 0
+
 async def get_position_info(symbol):
     try:
         positions = await exchange.fetch_positions([symbol])
@@ -87,10 +80,12 @@ async def get_position_info(symbol):
             if p['symbol'] == symbol and p.get('contracts', 0) != 0: return p
         return None
     except Exception as e: print(f"❌ خطا در دریافت اطلاعات پوزیشن: {e}"); return None
+
 def reset_state():
     global is_position_active, active_position_info
     is_position_active = False; active_position_info = {"symbol": None, "side": None}
     print("--- 🔄 وضعیت ربات ریست شد و آماده سیگنال جدید است ---")
+
 async def close_everything(symbol):
     print("\n--- 🛑 در حال پاکسازی و بستن همه چیز ---"); side = active_position_info.get("side")
     try: await exchange.cancel_all_orders(symbol); print("✅ تمام سفارشات باز لغو شدند.")
@@ -110,6 +105,7 @@ async def close_everything(symbol):
                     if attempt < max_close_attempts - 1: await asyncio.sleep(10)
             else: print("🔥🔥🔥 هشدار: بستن خودکار پوزیشن ناموفق بود. لطفاً به صورت دستی بررسی کنید! 🔥🔥🔥")
     reset_state()
+
 async def monitor_position_and_tp():
     global is_position_active, active_position_info
     symbol = active_position_info["symbol"]; side = active_position_info["side"]; print(f"👁️ مانیتورینگ پوزیشن {side.upper()} شروع شد.")
@@ -124,6 +120,7 @@ async def monitor_position_and_tp():
             if (side == 'buy' and current_price >= tp_price) or (side == 'sell' and current_price <= tp_price):
                 print("🎉 حد سود فعال شد!"); await close_everything(symbol); break
         except Exception as e: print(f"❌ خطا در حلقه مانیتورینگ (اتصال به شبکه چک شود): {e}")
+
 async def handle_trade_signal(symbol: str, side: str, signal_price: float):
     global is_position_active, active_position_info
     if is_position_active: print("یک پوزیشن از قبل فعال است."); return
@@ -153,57 +150,62 @@ async def handle_trade_signal(symbol: str, side: str, signal_price: float):
     except Exception as e: print(f"❌ خطا در اجرای سیگنال: {e}"); await close_everything(symbol)
 
 # ==============================================================================
-# بخش ۴: تابع تست خودکار (جدید)
+# بخش ۵: تابع تست تعاملی
 # ==============================================================================
-async def run_startup_test():
-    """یک پوزیشن تست باز کرده، چند دقیقه صبر کرده و سپس آن را می‌بندد."""
-    print("\n" + "="*50)
-    print("--- 🚦 شروع تست خودکار اتصال و معامله 🚦 ---")
+async def run_interactive_test():
+    """یک پوزیشن تست باز کرده، منتظر Enter مانده و سپس آن را می‌بندد."""
+    print("--- 🚦 شروع تست تعاملی اتصال به صرافی 🚦 ---")
     
     test_symbol = 'BTC/USDT:USDT'
     test_side = 'buy'
     test_price = 50000.0
     test_margin = 1.0
     test_leverage = 10
-    wait_minutes = 3 # چند دقیقه پوزیشن تست باز بماند
-
+    
     # بستن پوزیشن‌های باز قبلی
+    print("\n--- بررسی و بستن پوزیشن‌های باز احتمالی ---")
     position = await get_position_info(test_symbol)
     if position:
-        print("یک پوزیشن از قبل باز است. در حال بستن آن...")
         side = 'buy' if float(position['contracts']) > 0 else 'sell'
         close_side = 'sell' if side == 'buy' else 'buy'
         await exchange.create_market_order(test_symbol, close_side, abs(position['contracts']), params={'reduceOnly': True})
-        await asyncio.sleep(3)
-    
+        print("✅ پوزیشن قبلی با موفقیت بسته شد.")
+    else:
+        print("ℹ️ هیچ پوزیشن بازی از قبل وجود نداشت.")
+
     # باز کردن پوزیشن تست
     try:
         await exchange.set_leverage(test_leverage, test_symbol)
         amount = (test_margin * test_leverage) / test_price
+        print(f"\n--- در حال باز کردن پوزیشن تست {test_side.upper()} روی قیمت {test_price} ---")
         await exchange.create_market_order(test_symbol, test_side, amount)
         await asyncio.sleep(5)
         
         position = await get_position_info(test_symbol)
         if position:
-            print(f"✅✅✅ پوزیشن تست با موفقیت باز شد! لطفاً حساب CoinEx خود را چک کنید.")
-            print(f"قیمت ورود: {position['entryPrice']}")
-            print(f"این پوزیشن به مدت {wait_minutes} دقیقه باز خواهد ماند و سپس به طور خودکار بسته می‌شود.")
-            print("="*50)
-            await asyncio.sleep(wait_minutes * 60)
+            print("\n" + "="*60)
+            print("✅ پوزیشن تست با موفقیت باز شد. لطفاً حساب CoinEx خود را چک کنید.")
+            print(f"قیمت ورود واقعی: {position['entryPrice']}")
+            print("🚦 برای لغو پوزیشن و شروع ربات اصلی، کلید Enter را فشار دهید...")
+            print("="*60)
+
+            await asyncio.to_thread(sys.stdin.readline)
             
-            print(f"\n--- ⏰ پایان زمان تست. در حال بستن پوزیشن تست... ---")
-            await close_everything(test_symbol)
+            # بستن پوزیشن تست (این بار از close_everything استفاده نمی‌کنیم تا state اصلی ربات ریست نشود)
+            print("\n--- در حال بستن پوزیشن تست... ---")
+            await exchange.create_market_order(test_symbol, 'sell', abs(position['contracts']), params={'reduceOnly': True})
+            print("✅ پوزیشن تست با موفقیت بسته شد.")
             return True # تست موفق بود
         else:
-            print("\n❌ پوزیشن تست باز نشد. لطفاً خطاها را در لاگ بررسی کنید.")
+            print("\n❌ پوزیشن تست باز نشد. لطفاً خطاها را بررسی کنید.")
             return False # تست ناموفق بود
 
     except Exception as e:
-        print(f"❌ خطای جدی در هنگام تست خودکار: {e}")
+        print(f"❌ خطای جدی در هنگام تست تعاملی: {e}")
         return False
 
 # ==============================================================================
-# بخش ۵: حلقه اصلی ربات (کامل)
+# بخش ۶: حلقه اصلی ربات (کامل)
 # ==============================================================================
 async def trading_bot_loop():
     poll_seconds = 60; last_signal_timestamp = None
@@ -254,27 +256,26 @@ async def trading_bot_loop():
             print(f"❌ خطایی در حلقه اصلی رخ داد: {e}")
             await asyncio.sleep(poll_seconds)
 
-# ==============================================================================
-# بخش ۶: راه‌اندازی نهایی
-# ==============================================================================
-@app.on_event("startup")
-async def startup_event():
-    """ابتدا تست را اجرا کرده و سپس وارد حلقه اصلی می‌شود."""
-    print("🚀 سرور وب شروع به کار کرد...")
+async def main():
+    """تابع اصلی که ابتدا تست را اجرا کرده و سپس وارد حلقه اصلی می‌شود."""
+    test_successful = await run_interactive_test()
     
-    async def run_main_logic():
-        test_successful = await run_startup_test()
-        if test_successful:
-            print("\n" + "="*50)
-            print("✅ تست خودکار با موفقیت انجام شد.")
-            print("🤖 در حال شروع حلقه اصلی ربات استراتژی...")
-            print("="*50)
-            await trading_bot_loop()
-        else:
-            print("\n" + "="*50)
-            print("❌ تست خودکار ناموفق بود. ربات اصلی اجرا نخواهد شد.")
-            print("لطفاً لاگ‌ها را برای پیدا کردن خطا بررسی کنید.")
-            print("سرویس برای بررسی بیشتر فعال باقی می‌ماند.")
-            print("="*50)
+    if test_successful:
+        print("\n" + "="*60)
+        print("✅ تست تعاملی با موفقیت انجام شد.")
+        print("🤖 در حال شروع حلقه اصلی ربات استراتژی...")
+        print("="*60)
+        await trading_bot_loop()
+    else:
+        print("\n" + "="*60)
+        print("❌ تست تعاملی ناموفق بود. ربات اصلی اجرا نخواهد شد.")
+        print("="*60)
 
-    asyncio.create_task(run_main_logic())
+if __name__ == "__main__":
+    try: 
+        asyncio.run(main())
+    except KeyboardInterrupt: 
+        print("\nبرنامه توسط کاربر متوقف شد.")
+    finally:
+        if 'exchange' in locals() and exchange: 
+            asyncio.run(exchange.close())
