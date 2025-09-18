@@ -197,12 +197,8 @@ async def run_startup_test():
         order = await exchange.create_limit_order(test_symbol, test_side, amount, test_price)
         order_id = order['id']
         print(f"✅ سفارش لیمیت با موفقیت در صرافی قرار داده شد. ID: {order_id}")
-        print(f"این سفارش به مدت {wait_seconds} ثانیه باز خواهد ماند و در این مدت برای فعال نگه داشتن سرویس، قیمت چک می‌شود.")
-        end_time = asyncio.get_event_loop().time() + wait_seconds
-        while asyncio.get_event_loop().time() < end_time:
-            try: ticker = await exchange.fetch_ticker(test_symbol); print(f"   (تست در حال اجرا... قیمت فعلی: {ticker['last']})")
-            except Exception: print(f"   (تست در حال اجرا... در حال انتظار...)")
-            await asyncio.sleep(25)
+        print(f"این سفارش به مدت {wait_seconds} ثانیه باز خواهد ماند.")
+        await asyncio.sleep(wait_seconds)
         print(f"\n--- ⏰ پایان زمان تست. در حال لغو سفارش تست... ---")
         try: await exchange.cancel_order(order_id, test_symbol); print("✅ سفارش تست با موفقیت لغو شد.")
         except ccxt.OrderNotFound: print("ℹ️ سفارش تست قبلاً پر یا لغو شده بود.")
@@ -261,7 +257,7 @@ async def trading_bot_loop():
 # ==============================================================================
 async def self_ping_loop():
     """هر ۲۰ ثانیه یک بار به خودش پینگ می‌زند تا بیدار بماند."""
-    await asyncio.sleep(60)
+    await asyncio.sleep(10)
     render_url = os.getenv('RENDER_EXTERNAL_URL')
     if not render_url: print("⚠️ هشدار: آدرس خارجی Render یافت نشد. قابلیت self-ping غیرفعال است."); return
     print(f"✅ قابلیت بیدار نگه داشتن خودکار روی آدرس {render_url} فعال شد.")
@@ -269,9 +265,8 @@ async def self_ping_loop():
         try:
             async with httpx.AsyncClient() as client:
                 await client.get(render_url)
-            print(f"Ping successful at {datetime.now().strftime('%H:%M:%S')}")
-        except Exception as e:
-            print(f"Ping failed: {e}")
+        except Exception:
+            pass # نیازی به چاپ خطا برای پینگ نیست
         await asyncio.sleep(SELF_PING_INTERVAL_SECONDS)
 
 async def main_bot_logic():
@@ -286,7 +281,7 @@ async def main_bot_logic():
 @app.on_event("startup")
 async def startup_event():
     global bot_task
-    print("🚀 سرور وب شروع به کار کرد. در حال فعال کردن منطق اصلی ربات...")
+    print("🚀 سرور وب شروع به کار کرد. در حال فعال کردن منطق اصلی ربات و حلقه پینگ...")
     bot_task = asyncio.create_task(main_bot_logic())
     asyncio.create_task(self_ping_loop())
 
