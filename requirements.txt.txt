@@ -1,0 +1,6 @@
+ccxt[async_support]
+pandas
+numpy
+python-dotenv
+fastapi
+uvicorn
