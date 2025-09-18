@@ -222,7 +222,7 @@ async def run_startup_test():
 # بخش ۵: حلقه اصلی ربات
 # ==============================================================================
 async def trading_bot_loop():
-    poll_seconds = 60; last_signal_timestamp = None
+    poll_seconds = 30; last_signal_timestamp = None
     try:
         print("\n--- 🧠 در حال آماده‌سازی داده‌ها برای استراتژی اصلی ---")
         df15 = await fetch_ohlcv_df(exchange, SYMBOL_FOR_DATA, TIMEFRAME, DATA_LIMIT); 
@@ -275,3 +275,4 @@ async def startup_event():
 async def shutdown_event():
     if bot_task:
         bot_task.cancel(); print("🛑 تسک ربات لغو شد.")
+
