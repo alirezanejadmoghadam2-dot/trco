@@ -11,37 +11,22 @@ from fastapi import FastAPI
 # ==============================================================================
 # بخش ۰: راه‌اندازی وب‌سرور و متغیرهای سراسری
 # ==============================================================================
-app = FastAPI()
-bot_task = None # متغیری برای نگهداری تسک اصلی ربات
+app = FastAPI(); bot_task = None
 
 @app.get("/")
 async def health_check():
-    """این بخش به UptimeRobot پاسخ می‌دهد تا سرویس بیدار بماند."""
-    if bot_task and not bot_task.done():
-        return {"status": "ok", "message": "Trading bot is running."}
-    else:
-        return {"status": "error", "message": "Trading bot task is not running or has finished."}
+    if bot_task and not bot_task.done(): return {"status": "ok", "message": "Trading bot is running."}
+    else: return {"status": "error", "message": "Trading bot task is not running or has finished."}
 
 # ==============================================================================
 # بخش ۱: تنظیمات اصلی ربات
 # ==============================================================================
-load_dotenv()
-API_KEY = os.getenv('COINEX_API_KEY')
-SECRET_KEY = os.getenv('COINEX_SECRET_KEY')
-
-if not API_KEY or not SECRET_KEY:
-    raise ValueError("خطا: کلیدهای API (COINEX_API_KEY, COINEX_SECRET_KEY) در متغیرهای محیطی یافت نشدند.")
-
-# --- تنظیمات استراتژی ---
-SYMBOL_FOR_TRADING = 'BTC/USDT:USDT' 
-LEVERAGE = 10
-MARGIN_PER_STEP_USDT = 1.0
-TAKE_PROFIT_PERCENTAGE_FROM_AVG_ENTRY = 0.01
-DCA_STEP_PERCENTAGE = 0.005
+load_dotenv(); API_KEY = os.getenv('COINEX_API_KEY'); SECRET_KEY = os.getenv('COINEX_SECRET_KEY')
+if not API_KEY or not SECRET_KEY: raise ValueError("خطا: کلیدهای API یافت نشدند.")
+SYMBOL_FOR_TRADING = 'BTC/USDT:USDT'; LEVERAGE = 10; MARGIN_PER_STEP_USDT = 1.0;
+TAKE_PROFIT_PERCENTAGE_FROM_AVG_ENTRY = 0.01; DCA_STEP_PERCENTAGE = 0.005;
 TAKE_PROFIT_1_PERCENTAGE = 0.005; TAKE_PROFIT_2_PERCENTAGE = 0.01; CLOSE_RATIO_TP1 = 0.5;
 SYMBOL_FOR_DATA = "BTC/USDT"; TIMEFRAME = "15m"; DATA_LIMIT = 1000 
-
-# --- پارامترهای تحلیل تکنیکال ---
 countbc = 3; length = 21; rsi_length = length; rsi_sell = 60.0; rsi_buy = 40.0;
 macd_fast_length = 9; macd_slow_length = 26; macd_signal_length = 12; macd_threshold = 400.0;
 adx_val = 20.0; adx_length = length; adx_smoothing = length;
@@ -89,6 +74,7 @@ def build_conditions(df: pd.DataFrame) -> pd.DataFrame:
 # ==============================================================================
 is_position_active = False; active_position_info = {"symbol": None, "side": None, "stage": 1}
 exchange = ccxt.coinex({'apiKey': API_KEY, 'secret': SECRET_KEY, 'options': {'defaultType': 'swap'}, 'enableRateLimit': True, 'timeout': 60000})
+
 async def get_position_info(symbol):
     try:
         positions = await exchange.fetch_positions([symbol])
@@ -228,30 +214,44 @@ async def trading_bot_loop():
         df15 = await fetch_ohlcv_df(exchange, SYMBOL_FOR_DATA, TIMEFRAME, DATA_LIMIT); 
         print(f"✅ {len(df15)} کندل اولیه دریافت شد.")
     except Exception as e: print(f"❌ خطا در هنگام راه‌اندازی استراتژی: {e}"); return
+
     print("✅ ربات تحلیلگر و معامله‌گر آماده به کار است.")
     while True:
         try:
-            if is_position_active: print(f"یک پوزیشن {active_position_info.get('side', '').upper()} فعال است. منتظر بسته شدن..."); await asyncio.sleep(poll_seconds); continue
-            print(f"\n--- ({datetime.now().strftime('%H:%M:%S')}) در حال تحلیل بازار برای سیگنال جدید... ---")
-            last_candle_df = None; max_fetch_attempts = 3
-            for attempt in range(max_fetch_attempts):
-                try:
-                    last_candle_df = await fetch_ohlcv_df(exchange, SYMBOL_FOR_DATA, TIMEFRAME, 2)
-                    if last_candle_df is not None and len(last_candle_df) == 2: break
-                except Exception as e:
-                    print(f"❌ تلاش شماره {attempt + 1} برای دریافت کندل ناموفق بود: {e}")
-                    if attempt < max_fetch_attempts - 1: await asyncio.sleep(10)
-            if last_candle_df is None: print("🔥🔥🔥 هشدار: دریافت اطلاعات کندل جدید ناموفق بود. این چرخه تحلیل نادیده گرفته می‌شود. 🔥🔥🔥"); await asyncio.sleep(poll_seconds); continue
-            df15 = upsert_last_candle(df15, last_candle_df.iloc[[0]]); df15 = upsert_last_candle(df15, last_candle_df.iloc[[1]])
-            df15_with_signals = build_conditions(compute_indicators(df15))
-            current_row = df15_with_signals.iloc[-2]
-            if pd.notna(current_row["signal"]) and current_row['time'] != last_signal_timestamp:
-                last_signal_timestamp = current_row['time']
-                current_sig = str(current_row["signal"]).lower(); signal_price = float(current_row["close"])
-                print(f"🔥🔥🔥 سیگنال جدید یافت شد: {current_sig.upper()} در قیمت {signal_price:.2f} 🔥🔥🔥")
-                await handle_trade_signal(symbol=SYMBOL_FOR_TRADING, side=current_sig, signal_price=signal_price)
-            else: print(f"قیمت فعلی: {df15.iloc[-1]['close']:.2f}. شرایط سیگنال جدید مهیا نیست.")
-        except Exception as e: print(f"❌ خطایی در حلقه اصلی رخ داد: {e}"); await asyncio.sleep(poll_seconds)
+            if is_position_active: 
+                print(f"یک پوزیشن {active_position_info.get('side', '').upper()} فعال است. منتظر بسته شدن...")
+            else:
+                print(f"\n--- ({datetime.now().strftime('%H:%M:%S')}) در حال تحلیل بازار برای سیگنال جدید... ---")
+                last_candle_df = None; max_fetch_attempts = 3
+                for attempt in range(max_fetch_attempts):
+                    try:
+                        last_candle_df = await fetch_ohlcv_df(exchange, SYMBOL_FOR_DATA, TIMEFRAME, 2)
+                        if last_candle_df is not None and len(last_candle_df) == 2: break
+                    except Exception as e:
+                        print(f"❌ تلاش شماره {attempt + 1} برای دریافت کندل ناموفق بود: {e}")
+                        if attempt < max_fetch_attempts - 1: await asyncio.sleep(10)
+                
+                if last_candle_df is None: 
+                    print("🔥🔥🔥 هشدار: دریافت اطلاعات کندل جدید ناموفق بود. این چرخه تحلیل نادیده گرفته می‌شود. 🔥🔥🔥")
+                else:
+                    df15 = upsert_last_candle(df15, last_candle_df.iloc[[0]])
+                    df15 = upsert_last_candle(df15, last_candle_df.iloc[[1]])
+                    df15_with_signals = build_conditions(compute_indicators(df15))
+                    current_row = df15_with_signals.iloc[-2]
+                    
+                    if pd.notna(current_row["signal"]) and current_row['time'] != last_signal_timestamp:
+                        last_signal_timestamp = current_row['time']
+                        current_sig = str(current_row["signal"]).lower()
+                        signal_price = float(current_row["close"])
+                        print(f"🔥🔥🔥 سیگنال جدید یافت شد: {current_sig.upper()} در قیمت {signal_price:.2f} 🔥🔥🔥")
+                        await handle_trade_signal(symbol=SYMBOL_FOR_TRADING, side=current_sig, signal_price=signal_price)
+                    else: 
+                        print(f"قیمت فعلی: {df15.iloc[-1]['close']:.2f}. شرایط سیگنال جدید مهیا نیست.")
+        except Exception as e: 
+            print(f"❌ خطایی در حلقه اصلی رخ داد: {e}")
+        
+        # *** تغییر کلیدی: sleep در هر صورت اجرا می‌شود ***
+        await asyncio.sleep(poll_seconds)
 
 # ==============================================================================
 # بخش ۶: راه‌اندازی نهایی
@@ -275,4 +275,3 @@ async def startup_event():
 async def shutdown_event():
     if bot_task:
         bot_task.cancel(); print("🛑 تسک ربات لغو شد.")
-
