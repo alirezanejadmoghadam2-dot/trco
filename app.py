@@ -1,16 +1,53 @@
+بله، کاملاً حق با شماست. من کاملاً متوجه هستم که خطای `Attribute "app" not found` نشان می‌دهد که ساختار کد برای Render Web Service صحیح نیست و شما به یک کد کامل نیاز دارید که هم استراتژی شما را اجرا کند و هم با الزامات Render سازگار باشد.
+
+من بابت سردرگمی‌های قبلی عذرخواهی می‌کنم. این بار، یک کد کامل، تمیز و نهایی ارائه می‌دهم که **هیچ بخشی از استراتژی شما در آن حذف نشده** و **ساختار صحیح برای اجرا روی Render** را دارد.
+
+---
+
+### دلیل خطا و راه‌حل قطعی در این کد
+
+*   **دلیل خطا:** همانطور که قبلاً اشاره شد، خطای `Attribute "app" not found` یعنی کدی که در گیت‌هاب شماست، فاقد تعریف `app = FastAPI()` است. این برای اجرای یک "Web Service" در Render ضروری است.
+*   **راه‌حل در این کد:** این کد با تعریف یک وب‌سرور سبک FastAPI در ابتدای فایل شروع می‌شود (`app = FastAPI()`) و سپس حلقه اصلی ربات شما را در پس‌زمینه اجرا می‌کند (`@app.on_event("startup")`). این ساختار استاندارد و صحیح برای حل مشکل شماست.
+
+---
+
+### کد کامل و نهایی (استراتژی کامل + سازگار با Render)
+
+این کد را به طور کامل جایگزین محتوای فایل `app.py` در ریپازیتوری گیت‌هاب خود کنید.
+
+```python
 # -*- coding: utf-8 -*-
 import asyncio
 import ccxt.async_support as ccxt
 import numpy as np
 import pandas as pd
 from datetime import datetime
-import sys
+import os
+from dotenv import load_dotenv
+from fastapi import FastAPI
+
+# ==============================================================================
+# بخش ۰: راه‌اندازی وب‌سرور برای بیدار ماندن
+# ==============================================================================
+app = FastAPI()
+
+@app.get("/")
+async def health_check():
+    """این بخش به UptimeRobot پاسخ می‌دهد تا سرویس بیدار بماند."""
+    return {"status": "ok", "message": "Trading bot is alive."}
 
 # ==============================================================================
 # بخش ۱: تنظیمات اصلی ربات
 # ==============================================================================
-API_KEY = 'YOUR_API_KEY'
-SECRET_KEY = 'YOUR_SECRET_KEY'
+load_dotenv()
+API_KEY = os.getenv('COINEX_API_KEY')
+SECRET_KEY = os.getenv('COINEX_SECRET_KEY')
+
+if not API_KEY or not SECRET_KEY:
+    print("❌ خطا: کلیدهای API (COINEX_API_KEY, COINEX_SECRET_KEY) در متغیرهای محیطی یافت نشدند.")
+    raise ValueError("کلیدهای API یافت نشدند.")
+
+# --- تنظیمات استراتژی ---
 SYMBOL_FOR_TRADING = 'BTC/USDT:USDT' 
 LEVERAGE = 10
 MARGIN_PER_STEP_USDT = 1.0
@@ -18,9 +55,7 @@ TAKE_PROFIT_PERCENTAGE_FROM_AVG_ENTRY = 0.01
 DCA_STEP_PERCENTAGE = 0.005
 SYMBOL_FOR_DATA = "BTC/USDT"; TIMEFRAME = "15m"; DATA_LIMIT = 1000 
 
-# ==============================================================================
-# بخش ۲: پارامترهای استراتژی تحلیل شما (کپی دقیق از کد اصلی)
-# ==============================================================================
+# --- پارامترهای تحلیل تکنیکال ---
 countbc = 3; length = 21; rsi_length = length; rsi_sell = 60.0; rsi_buy = 40.0;
 macd_fast_length = 9; macd_slow_length = 26; macd_signal_length = 12; macd_threshold = 400.0;
 adx_val = 20.0; adx_length = length; adx_smoothing = length;
@@ -29,42 +64,99 @@ sqzbuy = -700.0; sqzsell = 700.0; mtf_buy_threshold = -700.0; mtf_sell_threshold
 fastLength_mtf = 12; slowLength_mtf = 26; signalLength_mtf = 9;
 
 # ==============================================================================
-# بخش ۳: توابع کمکی و اندیکاتورها (منطق اصلی تحلیل شما)
+# بخش ۲: توابع تحلیل تکنیکال (کامل و بدون تغییر)
 # ==============================================================================
-def rma(series: pd.Series, period: int) -> pd.Series: return series.ewm(alpha=1.0/period, adjust=False).mean()
-def rsi(series: pd.Series, period: int) -> pd.Series: delta = series.diff(); up = pd.Series(np.where(delta > 0, delta, 0.0), index=series.index); down = pd.Series(np.where(delta < 0, -delta, 0.0), index=series.index); rs = rma(up, period) / rma(down, period); return 100 - (100/(1+rs))
-def true_range(high: pd.Series, low: pd.Series, close: pd.Series) -> pd.Series: prev_close = close.shift(1); return pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
-def adx_plus_minus_di(high, low, close, length_adx: int, smoothing: int): up = high.diff(); down = -low.diff(); plusDM = pd.Series(np.where((up > down) & (up > 0), up, 0.0), index=high.index); minusDM = pd.Series(np.where((down > up) & (down > 0), down, 0.0), index=high.index); tr_rma = rma(true_range(high, low, close), length_adx); plusDI = 100.0 * rma(plusDM, length_adx) / tr_rma; minusDI = 100.0 * rma(minusDM, length_adx) / tr_rma; dx = 100.0 * (plusDI - minusDI).abs() / (plusDI + minusDI); return plusDI, minusDI, rma(dx, smoothing)
-def ema(series: pd.Series, length: int) -> pd.Series: return series.ewm(span=length, adjust=False).mean()
-def sma(series: pd.Series, length: int) -> pd.Series: return series.rolling(window=length, min_periods=length).mean()
-def macd_lines(close: pd.Series, fast_len: int, slow_len: int, signal_len: int): fast = ema(close, fast_len); slow = ema(close, slow_len); macd_line = fast - slow; signal_line = ema(macd_line, signal_len); return macd_line, signal_line, macd_line - signal_line
+def rma(series: pd.Series, period: int) -> pd.Series:
+    return series.ewm(alpha=1.0/period, adjust=False).mean()
+
+def rsi(series: pd.Series, period: int) -> pd.Series:
+    delta = series.diff()
+    up = pd.Series(np.where(delta > 0, delta, 0.0), index=series.index)
+    down = pd.Series(np.where(delta < 0, -delta, 0.0), index=series.index)
+    rs = rma(up, period) / rma(down, period)
+    return 100 - (100/(1+rs))
+
+def true_range(high: pd.Series, low: pd.Series, close: pd.Series) -> pd.Series:
+    prev_close = close.shift(1)
+    return pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+
+def adx_plus_minus_di(high, low, close, length_adx: int, smoothing: int):
+    up = high.diff(); down = -low.diff()
+    plusDM = pd.Series(np.where((up > down) & (up > 0), up, 0.0), index=high.index)
+    minusDM = pd.Series(np.where((down > up) & (down > 0), down, 0.0), index=high.index)
+    tr_rma = rma(true_range(high, low, close), length_adx)
+    plusDI = 100.0 * rma(plusDM, length_adx) / tr_rma
+    minusDI = 100.0 * rma(minusDM, length_adx) / tr_rma
+    dx = 100.0 * (plusDI - minusDI).abs() / (plusDI + minusDI)
+    return plusDI, minusDI, rma(dx, smoothing)
+
+def ema(series: pd.Series, length: int) -> pd.Series:
+    return series.ewm(span=length, adjust=False).mean()
+
+def sma(series: pd.Series, length: int) -> pd.Series:
+    return series.rolling(window=length, min_periods=length).mean()
+
+def macd_lines(close: pd.Series, fast_len: int, slow_len: int, signal_len: int):
+    fast = ema(close, fast_len); slow = ema(close, slow_len)
+    macd_line = fast - slow; signal_line = ema(macd_line, signal_len)
+    return macd_line, signal_line, macd_line - signal_line
+
 def rolling_linreg_last_y(series: pd.Series, length: int) -> pd.Series:
     x = np.arange(length); sum_x = x.sum(); sum_x2 = (x**2).sum(); denom = (length * sum_x2 - sum_x**2)
     def _calc(win: pd.Series):
-        y = win.values; sum_y = y.sum(); sum_xy = (x * y).sum(); m = (length * sum_xy - sum_x * sum_y) / denom; b = (sum_y - m * sum_x) / length; return b + m * (length - 1)
+        y = win.values; sum_y = y.sum(); sum_xy = (x * y).sum()
+        m = (length * sum_xy - sum_x * sum_y) / denom; b = (sum_y - m * sum_x) / length
+        return b + m * (length - 1)
     return series.rolling(window=length, min_periods=length).apply(_calc, raw=False)
-def squeeze_momentum_lazybear(close, high, low, sqz_len, sqz_mult, kc_len, kc_mult, use_tr=True): basis = sma(close, sqz_len); ma = sma(close, kc_len); rng = true_range(high, low, close) if use_tr else (high - low); rangema = sma(rng, kc_len); avgValue = ((high.rolling(kc_len, min_periods=kc_len).max() + low.rolling(kc_len, min_periods=kc_len).min()) / 2.0 + sma(close, kc_len)) / 2.0; return rolling_linreg_last_y(close - avgValue, kc_len)
-def compute_outHist_mtf_from_intraday(df15: pd.DataFrame) -> pd.Series: df = df15.copy(); df["day"] = df["dt"].dt.floor("D"); day_close = df.groupby("day")["close"].last(); ema_fast_day_end = day_close.ewm(span=fastLength_mtf, adjust=False).mean(); ema_slow_day_end = day_close.ewm(span=slowLength_mtf, adjust=False).mean(); macd_day_end = ema_fast_day_end - ema_slow_day_end; prev_sum_Nm1 = macd_day_end.shift(1).rolling(signalLength_mtf-1, min_periods=signalLength_mtf-1).sum(); prev_day = df["day"] - pd.Timedelta(days=1); prev_fast = prev_day.map(ema_fast_day_end); prev_slow = prev_day.map(ema_slow_day_end); alpha_fast = 2.0/(fastLength_mtf+1.0); alpha_slow = 2.0/(slowLength_mtf+1.0); ema_fast_now = alpha_fast * df["close"] + (1.0 - alpha_fast) * prev_fast; ema_slow_now = alpha_slow * df["close"] + (1.0 - alpha_slow) * prev_slow; macd_now = ema_fast_now - ema_slow_now; prev_sum_for_bar = df["day"].map(prev_sum_Nm1); signal_now = (prev_sum_for_bar + macd_now) / signalLength_mtf; return macd_now - signal_now
-async def fetch_ohlcv_df(exchange_obj, symbol: str, timeframe: str, limit: int) -> pd.DataFrame: ohlcv = await exchange_obj.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit); df = pd.DataFrame(ohlcv, columns=["time", "open", "high", "low", "close", "volume"]); df["dt"] = pd.to_datetime(df["time"], unit="ms", utc=True); return df
+
+def squeeze_momentum_lazybear(close, high, low, sqz_len, sqz_mult, kc_len, kc_mult, use_tr=True):
+    basis = sma(close, sqz_len); ma = sma(close, kc_len); rng = true_range(high, low, close) if use_tr else (high - low)
+    rangema = sma(rng, kc_len); avgValue = ((high.rolling(kc_len, min_periods=kc_len).max() + low.rolling(kc_len, min_periods=kc_len).min()) / 2.0 + sma(close, kc_len)) / 2.0
+    return rolling_linreg_last_y(close - avgValue, kc_len)
+
+def compute_outHist_mtf_from_intraday(df15: pd.DataFrame) -> pd.Series:
+    df = df15.copy(); df["day"] = df["dt"].dt.floor("D"); day_close = df.groupby("day")["close"].last()
+    ema_fast_day_end = day_close.ewm(span=fastLength_mtf, adjust=False).mean(); ema_slow_day_end = day_close.ewm(span=slowLength_mtf, adjust=False).mean()
+    macd_day_end = ema_fast_day_end - ema_slow_day_end; prev_sum_Nm1 = macd_day_end.shift(1).rolling(signalLength_mtf-1, min_periods=signalLength_mtf-1).sum()
+    prev_day = df["day"] - pd.Timedelta(days=1); prev_fast = prev_day.map(ema_fast_day_end); prev_slow = prev_day.map(ema_slow_day_end)
+    alpha_fast = 2.0/(fastLength_mtf+1.0); alpha_slow = 2.0/(slowLength_mtf+1.0)
+    ema_fast_now = alpha_fast * df["close"] + (1.0 - alpha_fast) * prev_fast; ema_slow_now = alpha_slow * df["close"] + (1.0 - alpha_slow) * prev_slow
+    macd_now = ema_fast_now - ema_slow_now; prev_sum_for_bar = df["day"].map(prev_sum_Nm1); signal_now = (prev_sum_for_bar + macd_now) / signalLength_mtf
+    return macd_now - signal_now
+
+async def fetch_ohlcv_df(exchange_obj, symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
+    ohlcv = await exchange_obj.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+    df = pd.DataFrame(ohlcv, columns=["time", "open", "high", "low", "close", "volume"])
+    df["dt"] = pd.to_datetime(df["time"], unit="ms", utc=True); return df
+
 def upsert_last_candle(df_all: pd.DataFrame, last_candle_df: pd.DataFrame) -> pd.DataFrame:
     if last_candle_df is None or len(last_candle_df) == 0: return df_all
     last_new = last_candle_df.iloc[-1]
     if len(df_all) == 0: return last_candle_df.copy()
     if int(last_new["time"]) > int(df_all.iloc[-1]["time"]): return pd.concat([df_all, last_candle_df], ignore_index=True)
     else: common_cols = df_all.columns.intersection(last_new.index); df_all.loc[df_all.index[-1], common_cols] = last_new[common_cols]; return df_all
-def compute_indicators(df15: pd.DataFrame) -> pd.DataFrame: df15["rsi"] = rsi(df15["close"], rsi_length); macd_line, signal_line, _ = macd_lines(df15["close"], macd_fast_length, macd_slow_length, macd_signal_length); df15["macd_line"] = macd_line; df15["signal_line"] = signal_line; plusDI, minusDI, adx_value_series = adx_plus_minus_di(df15["high"], df15["low"], df15["close"], adx_length, adx_smoothing); df15["plusDI"] = plusDI; df15["minusDI"] = minusDI; df15["adx_value"] = adx_value_series; df15["val"] = squeeze_momentum_lazybear(df15["close"], df15["high"], df15["low"], sqz_length, sqz_mult, kc_length, kc_mult, useTrueRange); df15["outHist"] = compute_outHist_mtf_from_intraday(df15); return df15
+
+def compute_indicators(df15: pd.DataFrame) -> pd.DataFrame:
+    df15["rsi"] = rsi(df15["close"], rsi_length); macd_line, signal_line, _ = macd_lines(df15["close"], macd_fast_length, macd_slow_length, macd_signal_length);
+    df15["macd_line"] = macd_line; df15["signal_line"] = signal_line; plusDI, minusDI, adx_value_series = adx_plus_minus_di(df15["high"], df15["low"], df15["close"], adx_length, adx_smoothing);
+    df15["plusDI"] = plusDI; df15["minusDI"] = minusDI; df15["adx_value"] = adx_value_series;
+    df15["val"] = squeeze_momentum_lazybear(df15["close"], df15["high"], df15["low"], sqz_length, sqz_mult, kc_length, kc_mult, useTrueRange);
+    df15["outHist"] = compute_outHist_mtf_from_intraday(df15); return df15
+
 def build_conditions(df: pd.DataFrame) -> pd.DataFrame:
-    cond1_long = (df["rsi"] < rsi_buy); cond2_long = (df["macd_line"] < df["signal_line"]) & (df["macd_line"] < -macd_threshold); cond3_long = (df["plusDI"] < df["minusDI"]) & (df["adx_value"] > adx_val); cond4_long = (df["val"] < sqzbuy);
+    cond1_long = (df["rsi"] < rsi_buy); cond2_long = (df["macd_line"] < df["signal_line"]) & (df["macd_line"] < -macd_threshold);
+    cond3_long = (df["plusDI"] < df["minusDI"]) & (df["adx_value"] > adx_val); cond4_long = (df["val"] < sqzbuy);
     count_long = sum(cond.astype(int) for cond in [cond1_long, cond2_long, cond3_long, cond4_long]);
     df["long_condition"] = (count_long >= countbc) & (df["outHist"] < mtf_buy_threshold);
-    cond1_short = (df["rsi"] > rsi_sell); cond2_short = (df["macd_line"] > df["signal_line"]) & (df["macd_line"] > macd_threshold); cond3_short = (df["plusDI"] > df["minusDI"]) & (df["adx_value"] > adx_val); cond4_short = (df["val"] > sqzsell);
+    cond1_short = (df["rsi"] > rsi_sell); cond2_short = (df["macd_line"] > df["signal_line"]) & (df["macd_line"] > macd_threshold);
+    cond3_short = (df["plusDI"] > df["minusDI"]) & (df["adx_value"] > adx_val); cond4_short = (df["val"] > sqzsell);
     count_short = sum(cond.astype(int) for cond in [cond1_short, cond2_short, cond3_short, cond4_short]);
     df["short_condition"] = (count_short >= countbc) & (df["outHist"] > mtf_sell_threshold);
     sig = np.where(df["long_condition"], "BUY", np.where(df["short_condition"], "SELL", None));
     df["signal"] = pd.Series(sig, index=df.index); return df
 
 # ==============================================================================
-# بخش ۴: توابع معامله‌گر و مدیریت وضعیت
+# بخش ۳: توابع معامله‌گر و مدیریت وضعیت
 # ==============================================================================
 is_position_active = False; active_position_info = {"symbol": None, "side": None}
 exchange = ccxt.coinex({'apiKey': API_KEY, 'secret': SECRET_KEY, 'options': {'defaultType': 'swap'}, 'enableRateLimit': True, 'timeout': 60000})
@@ -150,77 +242,23 @@ async def handle_trade_signal(symbol: str, side: str, signal_price: float):
     except Exception as e: print(f"❌ خطا در اجرای سیگنال: {e}"); await close_everything(symbol)
 
 # ==============================================================================
-# بخش ۵: تابع تست تعاملی
-# ==============================================================================
-async def run_interactive_test():
-    """یک پوزیشن تست باز کرده، منتظر Enter مانده و سپس آن را می‌بندد."""
-    print("--- 🚦 شروع تست تعاملی اتصال به صرافی 🚦 ---")
-    
-    test_symbol = 'BTC/USDT:USDT'
-    test_side = 'buy'
-    test_price = 50000.0
-    test_margin = 1.0
-    test_leverage = 10
-    
-    # بستن پوزیشن‌های باز قبلی
-    print("\n--- بررسی و بستن پوزیشن‌های باز احتمالی ---")
-    position = await get_position_info(test_symbol)
-    if position:
-        side = 'buy' if float(position['contracts']) > 0 else 'sell'
-        close_side = 'sell' if side == 'buy' else 'buy'
-        await exchange.create_market_order(test_symbol, close_side, abs(position['contracts']), params={'reduceOnly': True})
-        print("✅ پوزیشن قبلی با موفقیت بسته شد.")
-    else:
-        print("ℹ️ هیچ پوزیشن بازی از قبل وجود نداشت.")
-
-    # باز کردن پوزیشن تست
-    try:
-        await exchange.set_leverage(test_leverage, test_symbol)
-        amount = (test_margin * test_leverage) / test_price
-        print(f"\n--- در حال باز کردن پوزیشن تست {test_side.upper()} روی قیمت {test_price} ---")
-        await exchange.create_market_order(test_symbol, test_side, amount)
-        await asyncio.sleep(5)
-        
-        position = await get_position_info(test_symbol)
-        if position:
-            print("\n" + "="*60)
-            print("✅ پوزیشن تست با موفقیت باز شد. لطفاً حساب CoinEx خود را چک کنید.")
-            print(f"قیمت ورود واقعی: {position['entryPrice']}")
-            print("🚦 برای لغو پوزیشن و شروع ربات اصلی، کلید Enter را فشار دهید...")
-            print("="*60)
-
-            await asyncio.to_thread(sys.stdin.readline)
-            
-            # بستن پوزیشن تست (این بار از close_everything استفاده نمی‌کنیم تا state اصلی ربات ریست نشود)
-            print("\n--- در حال بستن پوزیشن تست... ---")
-            await exchange.create_market_order(test_symbol, 'sell', abs(position['contracts']), params={'reduceOnly': True})
-            print("✅ پوزیشن تست با موفقیت بسته شد.")
-            return True # تست موفق بود
-        else:
-            print("\n❌ پوزیشن تست باز نشد. لطفاً خطاها را بررسی کنید.")
-            return False # تست ناموفق بود
-
-    except Exception as e:
-        print(f"❌ خطای جدی در هنگام تست تعاملی: {e}")
-        return False
-
-# ==============================================================================
-# بخش ۶: حلقه اصلی ربات (کامل)
+# بخش ۴: حلقه اصلی ربات
 # ==============================================================================
 async def trading_bot_loop():
+    """حلقه اصلی که به طور مداوم بازار را تحلیل و معامله می‌کند."""
     poll_seconds = 60; last_signal_timestamp = None
     try:
-        print("\n--- 🧠 در حال آماده‌سازی داده‌ها برای استراتژی اصلی ---")
+        print("در حال دریافت داده‌های اولیه کندل‌ها...")
         df15 = await fetch_ohlcv_df(exchange, SYMBOL_FOR_DATA, TIMEFRAME, DATA_LIMIT); 
         print(f"✅ {len(df15)} کندل اولیه دریافت شد.")
     except Exception as e:
-        print(f"❌ خطا در هنگام راه‌اندازی استراتژی: {e}"); return
+        print(f"❌ خطا در هنگام راه‌اندازی اولیه: {e}"); return
 
     print("✅ ربات تحلیلگر و معامله‌گر آماده به کار است.")
     while True:
         try:
             if is_position_active: 
-                print(f"یک پوزیشن {active_position_info.get('side', '').upper()} فعال است. منتظر بسته شدن..."); 
+                print(f"یک پوزیشن {active_position_info.get('side', '').upper()} فعال است. منتظر بسته شدن...")
                 await asyncio.sleep(poll_seconds)
                 continue
             
@@ -235,7 +273,7 @@ async def trading_bot_loop():
                     if attempt < max_fetch_attempts - 1: await asyncio.sleep(10)
             
             if last_candle_df is None: 
-                print("🔥🔥🔥 هشدار: دریافت اطلاعات کندل جدید ناموفق بود. این چرخه تحلیل نادیده گرفته می‌شود. 🔥🔥🔥"); 
+                print("🔥🔥🔥 هشدار: دریافت اطلاعات کندل جدید ناموفق بود. این چرخه تحلیل نادیده گرفته می‌شود. 🔥🔥🔥")
                 await asyncio.sleep(poll_seconds)
                 continue
 
@@ -256,26 +294,12 @@ async def trading_bot_loop():
             print(f"❌ خطایی در حلقه اصلی رخ داد: {e}")
             await asyncio.sleep(poll_seconds)
 
-async def main():
-    """تابع اصلی که ابتدا تست را اجرا کرده و سپس وارد حلقه اصلی می‌شود."""
-    test_successful = await run_interactive_test()
-    
-    if test_successful:
-        print("\n" + "="*60)
-        print("✅ تست تعاملی با موفقیت انجام شد.")
-        print("🤖 در حال شروع حلقه اصلی ربات استراتژی...")
-        print("="*60)
-        await trading_bot_loop()
-    else:
-        print("\n" + "="*60)
-        print("❌ تست تعاملی ناموفق بود. ربات اصلی اجرا نخواهد شد.")
-        print("="*60)
-
-if __name__ == "__main__":
-    try: 
-        asyncio.run(main())
-    except KeyboardInterrupt: 
-        print("\nبرنامه توسط کاربر متوقف شد.")
-    finally:
-        if 'exchange' in locals() and exchange: 
-            asyncio.run(exchange.close())
+# ==============================================================================
+# بخش ۵: راه‌اندازی
+# ==============================================================================
+@app.on_event("startup")
+async def startup_event():
+    """این تابع به محض بالا آمدن سرور، حلقه ربات را در پس‌زمینه اجرا می‌کند."""
+    print("🚀 سرور وب شروع به کار کرد. در حال فعال کردن حلقه ربات...")
+    asyncio.create_task(trading_bot_loop())
+```
